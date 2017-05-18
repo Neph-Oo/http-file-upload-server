@@ -1,7 +1,7 @@
 # http-file-upload-server
 Xmpp http-file-upload service implementation (xep-0363)
 
-*WIP*
+WIP
 
 ###TODO:
 * add max file size setting
