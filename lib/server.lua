@@ -5,6 +5,9 @@ local init_hmac = assert(loadfile(libhmac))
 init_headers()
 init_hmac()
 
+--test = hmac_sha256("w10.iso" .. " " .. "4200062976", "key")
+--print(test)
+--os.exit(0)
 
 local function get_file_size (file)
    local old_pos = file:seek()
@@ -24,7 +27,6 @@ end
 local function openfile (client, client_request)
    --check if file exist, else send error 404
    --exec request
-   print(client_request.filename)
    local file = io.open(client_request.filename, "rb")
    if not file then
       client_request.header_answer = set_header_error(404)
@@ -33,10 +35,11 @@ local function openfile (client, client_request)
    end
 
    client_request.data_tot_length = get_file_size(file)
-   local http_header = http_header.base
-   http_header[5] = http_header[5] .. client_request.data_tot_length .. "\r\n"
-   http_header[2] = http_header[2] .. string.gsub(os.date(), "(%w+)(.+)", "%1,%2 GMT") .. "\r\n"
-   client_request.header_answer = table.concat(http_header)
+   http_header.base[5] = http_header.base[5] .. client_request.data_tot_length .. "\r\n"
+   http_header.base[2] = http_header.base[2] .. string.gsub(os.date(), "(%w+)(.+)", "%1,%2 GMT") .. "\r\n"
+   client_request.header_answer = table.concat(http_header.base)
+   http_header.base[5] = "Content-Length: "
+   http_header.base[2] = "Date: "
    client_request.file = file
 
    return client_request
@@ -72,7 +75,7 @@ local function verify_client_signature (client_request)
       return client_request
    end
 
-   print("[DEBUG] Current hmac:  " .. client_request.cl_sig)
+   print("[DEBUG] Current hmac: " .. client_request.cl_sig)
 
    return client_request
 end
@@ -127,7 +130,7 @@ local function fetch_header (client_request)
 end
 
 
-local function parse_client_request (client_request)
+local function parse_client_request (client, client_request)
    --check request validity
    if client_request.header[1] and client_request.req_type == "" then
       if string.match(client_request.header[1], "GET /[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
@@ -157,7 +160,9 @@ local function parse_client_request (client_request)
       else
          --invalid request, send error 400 and return ??
          local err = set_header_error(400)
-         client:send(err)
+         if client then
+            client:send(err)
+         end
          client_request.req_validity = "invalid"
          return client_request
       end
@@ -181,7 +186,9 @@ local function verify_header_validity (client, client_request)
             client_request = openfile(client, client_request)
             client_request.req_validity = "terminated"
             client:send(client_request.header_answer)
-            client_request.file:close()
+            if client_request.file then
+               client_request.file:close()
+            end
             client_request.file = nil
          elseif client_request.req_type == "put" then
             client_request = verify_client_signature(client_request)
@@ -264,7 +271,7 @@ function create_client_coroutine ()
                   cl_data = ""
                   goto start
                end
-               local data, error, partial = cl:receive(4096)
+               local data, error, partial = cl:receive(16384)
                if data then
                   --data length avail, return and continue reading block next time
                   cl_data = data
@@ -333,7 +340,7 @@ function control_client_coroutine (cor, client_request, client, co_ctr)
          if client_request.file then
             client_request.file:close()
          end
-         if client_request.data_length < client_request.data_tot_length then
+         if client_request.req_type == "put" and client_request.data_length < client_request.data_tot_length then
             --remove file
             local s, e = string.find(arg[0], "/bin")
             local rootpath = string.sub(arg[0], 1, s)
@@ -366,7 +373,7 @@ function exec_client_request (client_request, client)
          return client_request
       end
 
-      client_request = parse_client_request(client_request)
+      client_request = parse_client_request(client, client_request)
       if client_request.req_validity == "invalid" then
          return client_request
       end

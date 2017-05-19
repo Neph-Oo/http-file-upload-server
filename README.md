@@ -7,10 +7,12 @@ WIP
 * add max file size setting
 * add client queue setting
 * add server root path setting
+* randomize path
 * optionnaly:
    - remove private metadata from uploaded file (png, jpg, avi, etc)
    - check magic number/filter files ?
-   -
+   - bandwith setup
+   - add favicon
 
 
 ###Dependencies:

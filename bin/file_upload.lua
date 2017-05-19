@@ -1,8 +1,11 @@
 #!/bin/lua
 local socket = require("socket")
 local libserver = assert(string.gsub(string.gsub(arg[0], "bin", "lib"), "file_upload.lua", "server.lua"))
+local config = assert(string.gsub(string.gsub(arg[0], "bin", "conf"), "file_upload.lua", "server.conf"))
+local init_config = assert(loadfile(config))
 local init_server = assert(loadfile(libserver))
 init_server()
+init_config()
 
 
 ---------------------------------------------------
@@ -10,7 +13,7 @@ init_server()
 local server = assert(socket.tcp())
 assert(server:bind("127.0.0.1", 1024))
 assert(server:listen(10))
-assert(server:settimeout(4))
+assert(server:settimeout(server_request_time))
 
 
 local co_max = 5
@@ -19,6 +22,7 @@ local co_list = {}
 local client_request_array = {}
 while 1 do
    --if co_max > 0, accept new client/create new coroutine
+   if co_ctr == co_max then socket.sleep(0.1) end
    if co_ctr > 0 then
       local client = server:accept()
 
@@ -33,7 +37,7 @@ while 1 do
          end
 
          print("[DEBUG]value of curr_co: " .. curr_co)
-         client:settimeout(2)
+         client:settimeout(client_request_time)
          co_list[curr_co] = create_client_coroutine()
 
          --init client coroutine
@@ -50,7 +54,7 @@ while 1 do
       co_list[i], client_request_array[i], co_ctr = control_client_coroutine(co_list[i],
                                                       client_request_array[i], client, co_ctr)
    end
-   print("[DEBUG]non blocking io")
+   --print("[DEBUG]non blocking io")
 end
 
 server:close()
