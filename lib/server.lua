@@ -5,10 +5,6 @@ local init_hmac = assert(loadfile(libhmac))
 init_headers()
 init_hmac()
 
---test = hmac_sha256("w10.iso" .. " " .. "4200062976", "key")
---print(test)
---os.exit(0)
-
 local function get_file_size (file)
    local old_pos = file:seek()
    local size = file:seek("end")
@@ -24,10 +20,10 @@ local function set_header_error (err)
 end
 
 
-local function openfile (client, client_request)
+local function openfile (client, client_request, conf)
    --check if file exist, else send error 404
    --exec request
-   local file = io.open(client_request.filename, "rb")
+   local file = io.open(conf.root_path .. client_request.filename, "rb")
    if not file then
       client_request.header_answer = set_header_error(404)
       client_request.data_block_answer = err404_data
@@ -46,7 +42,7 @@ local function openfile (client, client_request)
 end
 
 
-local function verify_client_signature (client_request)
+local function verify_client_signature (client_request, conf)
    --get content length from header, else send error 400
    --verify client signature
 
@@ -67,29 +63,26 @@ local function verify_client_signature (client_request)
 
    --concat filename,space,data_length
    local data_concat = client_request.filename .. "\x20" .. tostring(client_request.data_tot_length)
-   local data_sig = hmac_sha256(data_concat, "key")
-   print("[DEBUG] data_sig: " .. data_sig)
+   local data_sig = hmac_sha256(data_concat, conf.key)
    if data_sig ~= client_request.cl_sig then
       client_request.header_answer = set_header_error(403)
       client_request.data_block_answer = err403_data
       return client_request
    end
 
-   print("[DEBUG] Current hmac: " .. client_request.cl_sig)
-
    return client_request
 end
 
 
-local function createfile (client_request)
+local function createfile (client_request, conf)
    --verify file doesn't exist, create file
-   local file = io.open(client_request.filename, "rb")
+   local file = io.open(conf.root_path .. client_request.filename, "rb")
    if file then
       client_request.header_answer = set_header_error(409)
       client_request.data_block_answer = err409_data
       return client_request
    end
-   client_request.file = io.open(client_request.filename, "wb")
+   client_request.file = io.open(conf.root_path .. client_request.filename, "wb")
 
    return client_request
 end
@@ -172,18 +165,18 @@ local function parse_client_request (client, client_request)
 end
 
 
-local function verify_header_validity (client, client_request)
+local function verify_header_validity (client, client_request, conf)
    --check header validity
    if string.match(client_request.data_tmp, ".*\r*\n\r*\n")
    or string.match(client_request.data_tmp, "^\r*\n") then
       --verify header, execute request (send header)
       if client then
          if client_request.req_type == "get" then
-            client_request = openfile(client, client_request)
+            client_request = openfile(client, client_request, conf)
             client_request.req_validity = "valid"
             client:send(client_request.header_answer)
          elseif client_request.req_type == "head" then
-            client_request = openfile(client, client_request)
+            client_request = openfile(client, client_request, conf)
             client_request.req_validity = "terminated"
             client:send(client_request.header_answer)
             if client_request.file then
@@ -191,10 +184,10 @@ local function verify_header_validity (client, client_request)
             end
             client_request.file = nil
          elseif client_request.req_type == "put" then
-            client_request = verify_client_signature(client_request)
+            client_request = verify_client_signature(client_request, conf)
             if client_request.req_validity ~= "invalid" then
                if client_request.data_block_answer == "" then
-                  client_request = createfile(client_request)
+                  client_request = createfile(client_request, conf)
                end
                --remove header from data_tmp
                --copy and add length of data already received (can't be longer than 4096)
@@ -213,15 +206,34 @@ local function verify_header_validity (client, client_request)
 end
 
 
-local function exec_request (client, client_request)
+local function send_data_to_client (client, client_request)
+   local bytes_sent, err, last_idx =
+      client:send(client_request.data_block_answer, 1, #client_request.data_block_answer)
+
+   while bytes_sent ~= #client_request.data_block_answer do
+      if err == "closed" then
+         --fatal
+         client_request.req_validity = "invalid"
+         return client_request
+      else
+         --send last bytes
+         bytes_sent, err, last_idx =
+            client:send(client_request.data_block_answer, last_idx + 1, #client_request.data_block_answer)
+      end
+   end
+
+   return client_request
+end
+
+
+
+local function exec_request (client, client_request, conf)
    if (client_request.req_validity == "valid" or client_request.req_validity == "continue") and client then
       if client_request.req_type == "get" then
          if client_request.file and client_request.data_length < client_request.data_tot_length then
-            print("[DEBUG] Data tot length: " .. client_request.data_tot_length)
-            client_request.data_block_answer = client_request.file:read(4096)
+            client_request.data_block_answer = client_request.file:read(conf.chunk_size)
             client_request.data_length = client_request.data_length + #client_request.data_block_answer
-            local bytes_sent = client:send(client_request.data_block_answer)
-            print("[DEBUG] Data tot sent: " .. client_request.data_length)
+            client_request = send_data_to_client(client, client_request)
          else
             client:send(client_request.data_block_answer)
             client_request.req_validity = "terminated"
@@ -306,7 +318,7 @@ end
 
 
 
-function control_client_coroutine (cor, client_request, client, co_ctr)
+function control_client_coroutine (cor, client_request, client, co_ctr, conf)
    if cor then
       --retrieve http header/request
       --if request isn't valid, drop client
@@ -332,7 +344,7 @@ function control_client_coroutine (cor, client_request, client, co_ctr)
          end
          client_request.data_tmp = data
          --verfify/parse data
-         client_request = exec_client_request(client_request, client)
+         client_request = exec_client_request(client_request, client, conf)
          if client_request.req_validity == "invalid" or client_request.req_validity == "terminated" then
             coroutine.resume(cor, false)
          end
@@ -342,9 +354,7 @@ function control_client_coroutine (cor, client_request, client, co_ctr)
          end
          if client_request.req_type == "put" and client_request.data_length < client_request.data_tot_length then
             --remove file
-            local s, e = string.find(arg[0], "/bin")
-            local rootpath = string.sub(arg[0], 1, s)
-            os.remove(rootpath .. client_request.filename)
+            os.remove(conf.root_path .. client_request.filename)
          end
          client_request = nil
          cor = nil
@@ -359,7 +369,7 @@ end
 
 
 
-function exec_client_request (client_request, client)
+function exec_client_request (client_request, client, conf)
    if client_request.req_validity == "incomplete" then
       --denial of service, drop client
       if #client_request.header > 50 then
@@ -378,10 +388,10 @@ function exec_client_request (client_request, client)
          return client_request
       end
 
-      client_request = verify_header_validity(client, client_request)
+      client_request = verify_header_validity(client, client_request, conf)
    end
 
-   client_request = exec_request(client, client_request)
+   client_request = exec_request(client, client_request, conf)
 
    --DEBUG
    --[[

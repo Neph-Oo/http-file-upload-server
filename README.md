@@ -10,9 +10,11 @@ WIP
 * randomize path
 * optionnaly:
    - remove private metadata from uploaded file (png, jpg, avi, etc)
-   - check magic number/filter files ?
-   - bandwith setup
+   - check magic number/filter
+   - bandwidth setup
    - add favicon
+   - add priority based on client bandwidth
+   - ...
 
 
 ###Dependencies:

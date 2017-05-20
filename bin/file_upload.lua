@@ -8,21 +8,51 @@ init_server()
 init_config()
 
 
+local function get_conf ()
+   if not listen_address or not max_clients or not server_root_path
+   or not token_secret_key or not port then
+      return nil
+   end
+   if not client_timeout_delay then client_timeout_delay = 23 end
+   if not server_request_time then server_request_time = 0.001 end
+   if not client_request_time then client_request_time = 0.5 end
+   if not data_chunk_size then data_chunk_size = 16384 end
+   return {
+      host_addr = listen_address,
+      host_port = port,
+      co_max = max_clients,
+      root_path = server_root_path,
+      key = token_secret_key,
+      timeout_delay = client_timeout_delay,
+      server_req_time = server_request_time,
+      client_req_time = client_request_time,
+      chunk_size = data_chunk_size
+   }
+end
+
 ---------------------------------------------------
 
+if delete_me then
+   print("Rtfm-err: \"delete_me\" == " .. tostring(delete_me) .. "\nPlease edit server.conf")
+   os.exit(1)
+end
+
+conf = get_conf()
+if not conf then os.exit(1) end
+
 local server = assert(socket.tcp())
-assert(server:bind("127.0.0.1", 1024))
-assert(server:listen(10))
-assert(server:settimeout(server_request_time))
+assert(server:bind(conf.host_addr, conf.host_port))
+assert(server:listen(30))
+assert(server:settimeout(conf.server_req_time))
 
 
-local co_max = 5
-local co_ctr = co_max
+--local co_max = 5
+local co_ctr = conf.co_max
 local co_list = {}
 local client_request_array = {}
 while 1 do
    --if co_max > 0, accept new client/create new coroutine
-   if co_ctr == co_max then socket.sleep(0.1) end
+   if co_ctr == conf.co_max then socket.sleep(0.1) end
    if co_ctr > 0 then
       local client = server:accept()
 
@@ -31,13 +61,13 @@ while 1 do
       --resume coroutine once (will yield immediately)
       if client then
          local curr_co = 1
-         for i = 1, co_max do
+         for i = 1, conf.co_max do
             curr_co = i
             if not co_list[i] then break end
          end
 
          print("[DEBUG]value of curr_co: " .. curr_co)
-         client:settimeout(client_request_time)
+         client:settimeout(conf.client_req_time)
          co_list[curr_co] = create_client_coroutine()
 
          --init client coroutine
@@ -50,11 +80,10 @@ while 1 do
    --if there is client pending request, resume it
    --if client isn't ready, yield immediatly and resume next client
    --remove dead coroutines
-   for i = 1, co_max do
+   for i = 1, conf.co_max do
       co_list[i], client_request_array[i], co_ctr = control_client_coroutine(co_list[i],
-                                                      client_request_array[i], client, co_ctr)
+                                                      client_request_array[i], client, co_ctr, conf)
    end
-   --print("[DEBUG]non blocking io")
 end
 
 server:close()
