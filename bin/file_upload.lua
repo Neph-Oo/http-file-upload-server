@@ -1,5 +1,6 @@
 #!/bin/lua
 local socket = require("socket")
+local lfs = require("lfs")
 local libserver = assert(string.gsub(string.gsub(arg[0], "bin", "lib"), "file_upload.lua", "server.lua"))
 local config = assert(string.gsub(string.gsub(arg[0], "bin", "conf"), "file_upload.lua", "server.conf"))
 local init_config = assert(loadfile(config))
@@ -13,10 +14,20 @@ local function get_conf ()
    or not token_secret_key or not port then
       return nil
    end
-   if not client_timeout_delay then client_timeout_delay = 23 end
-   if not server_request_time then server_request_time = 0.001 end
-   if not client_request_time then client_request_time = 0.5 end
-   if not data_chunk_size then data_chunk_size = 16384 end
+   client_timeout_delay = client_timeout_delay or 23
+   server_request_time = server_request_time or 0.001
+   client_request_time = client_request_time or 0.5
+   data_chunk_size = data_chunk_size or 16384
+
+   --remove trailing slash
+   if string.byte(server_root_path, #server_root_path) == "/" then
+      server_root_path = string.sub(server_root_path, 1, #server_root_path - 1)
+   end
+
+   if not lfs.chdir(server_root_path) then
+      io.stderr:write("Fatal: " .. ({lfs.chdir(server_root_path)})[2])
+      os.exit(1)
+   end
    return {
       host_addr = listen_address,
       host_port = port,
@@ -33,7 +44,7 @@ end
 ---------------------------------------------------
 
 if delete_me then
-   print("Rtfm-err: \"delete_me\" == " .. tostring(delete_me) .. "\nPlease edit server.conf")
+   io.stderr:write("Rtfm-err: \"delete_me\" == " .. tostring(delete_me) .. "\nPlease edit server.conf\n")
    os.exit(1)
 end
 

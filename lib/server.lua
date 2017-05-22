@@ -1,3 +1,4 @@
+local lfs = require("lfs")
 local headers = assert(string.gsub(string.gsub(arg[0], "bin", "data"), "file_upload.lua", "http-headers.lua"))
 local libhmac = assert(string.gsub(string.gsub(arg[0], "bin", "lib"), "file_upload.lua", "hmac.lua"))
 local init_headers = assert(loadfile(headers))
@@ -21,9 +22,7 @@ end
 
 
 local function openfile (client, client_request, conf)
-   --check if file exist, else send error 404
-   --exec request
-   local file = io.open(conf.root_path .. client_request.filename, "rb")
+   local file = io.open(client_request.filename, "rb")
    if not file then
       client_request.header_answer = set_header_error(404)
       client_request.data_block_answer = err404_data
@@ -76,13 +75,19 @@ end
 
 local function createfile (client_request, conf)
    --verify file doesn't exist, create file
-   local file = io.open(conf.root_path .. client_request.filename, "rb")
+   if not lfs.mkdir(client_request.upload_dir) then
+      client_request.header_answer = set_header_error(409)
+      client_request.data_block_answer = err409_data
+      return client_request
+   end
+
+   local file = io.open(client_request.filename, "rb")
    if file then
       client_request.header_answer = set_header_error(409)
       client_request.data_block_answer = err409_data
       return client_request
    end
-   client_request.file = io.open(conf.root_path .. client_request.filename, "wb")
+   client_request.file = io.open(client_request.filename, "wb")
 
    return client_request
 end
@@ -123,32 +128,83 @@ local function fetch_header (client_request)
 end
 
 
+local function parse_get_head_req (client_request)
+   client_request.upload_dir =
+      string.match(client_request.header[1], "/[\x20A-Za-z:0-9;?,+()=_-]+/")
+   if not client_request.upload_dir then
+      client_request.req_validity = "invalid"
+      return client_request
+   end
+   client_request.upload_dir = string.sub(client_request.upload_dir, 2, #client_request.upload_dir - 1)
+
+   client_request.filename = string.match(client_request.header[1], "/[\x20A-Za-z:0-9;?,+()=._-]+ ")
+   if not client_request.filename or string.match(client_request.filename, "%.%.$") then
+      client_request.req_validity = "invalid"
+      return client_request
+   end
+   client_request.filename = string.sub(client_request.filename, 2, #client_request.filename - 1)
+
+   return client_request
+end
+
+
+local function parse_put_req (client_request)
+   client_request.upload_dir =
+      string.match(client_request.header[1], "/[\x20A-Za-z:0-9;?,+()=_-]+/")
+   if not client_request.upload_dir then
+      client_request.req_validity = "invalid"
+      return client_request
+   end
+   client_request.upload_dir = string.sub(client_request.upload_dir, 2, #client_request.upload_dir - 1)
+
+   client_request.filename =
+      string.match(client_request.header[1], "[\x20A-Za-z:0-9;?,+()=._-]+?v=")
+   if not client_request.filename or string.match(client_request.filename, "%.%.$") then
+      client_request.req_validity = "invalid"
+      return client_request
+   end
+   client_request.filename = string.sub(client_request.filename, 1, #client_request.filename - 3)
+
+   client_request.cl_sig = string.find(client_request.header[1], "?") + 3
+   if not client_request.cl_sig then
+      client_request.req_validity = "invalid"
+      return client_request
+   end
+   client_request.cl_sig =
+      string.sub(client_request.header[1], client_request.cl_sig, client_request.cl_sig + 63)
+
+   return client_request
+end
+
+
 local function parse_client_request (client, client_request)
    --check request validity
    if client_request.header[1] and client_request.req_type == "" then
-      if string.match(client_request.header[1], "GET /[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
-         client_request.filename = string.match(client_request.header[1], "/[\x20A-Za-z:0-9;,+()=._-]+ ")
-         client_request.filename = string.sub(client_request.filename, 2, #client_request.filename - 1)
+      if string.match(client_request.header[1],
+         "GET /[\x20A-Za-z:0-9;?,+()=_-]+/[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
+
+         client_request = parse_get_head_req(client_request)
+         if client_request.req_validity == "invalid" then return client_request end
+
          client_request.req_type = "get"
-      elseif string.match(client_request.header[1], "PUT /[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
+      elseif string.match(client_request.header[1],
+         "PUT /[\x20A-Za-z:0-9;?,+()=_-]+/[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
          --get hmac signature and filename, else, invalid request
          --verify hmac with secret key and request header, else send 403 forbiden
-         --if file exist, send 409 conflict
-         client_request.filename = string.match(client_request.header[1], "/[\x20A-Za-z:0-9;,+()=._-]+")
-         client_request.filename = string.sub(client_request.filename, 2, #client_request.filename)
-         client_request.cl_sig = string.find(client_request.header[1], "?") + 3
-         if not client_request.cl_sig then
-            client_request.req_validity = "invalid"
-            return client_request
-         end
-         client_request.cl_sig =
-            string.sub(client_request.header[1], client_request.cl_sig, client_request.cl_sig + 63)
+         --if file/dir exist, send 409 conflict
+
+         client_request = parse_put_req(client_request)
+         if client_request.req_validity == "invalid" then return client_request end
+
          client_request.req_type = "put"
-      elseif string.match(client_request.header[1], "HEAD /[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
+      elseif string.match(client_request.header[1],
+         "HEAD /[\x20A-Za-z:0-9;?,+()=_-]+/[\x20A-Za-z:0-9;?,+()=._-]+ HTTP/1.[0-1]") then
          --check if file exist, else send error 404
          --send header and close connection
-         client_request.filename = string.match(client_request.header[1], "/[\x20A-Za-z:0-9;,+()=._-]+ ")
-         client_request.filename = string.sub(client_request.filename, 2, #client_request.filename - 1)
+
+         client_request = parse_get_head_req(client_request)
+         if client_request.req_validity == "invalid" then return client_request end
+
          client_request.req_type = "head"
       else
          --invalid request, send error 400 and return ??
@@ -172,10 +228,12 @@ local function verify_header_validity (client, client_request, conf)
       --verify header, execute request (send header)
       if client then
          if client_request.req_type == "get" then
+            client_request.filename = client_request.upload_dir .. "/" .. client_request.filename
             client_request = openfile(client, client_request, conf)
             client_request.req_validity = "valid"
             client:send(client_request.header_answer)
          elseif client_request.req_type == "head" then
+            client_request.filename = client_request.upload_dir .. "/" .. client_request.filename
             client_request = openfile(client, client_request, conf)
             client_request.req_validity = "terminated"
             client:send(client_request.header_answer)
@@ -184,6 +242,8 @@ local function verify_header_validity (client, client_request, conf)
             end
             client_request.file = nil
          elseif client_request.req_type == "put" then
+            --client_request = set_file_path(client_request, conf)
+            client_request.filename = client_request.upload_dir .. "/" .. client_request.filename
             client_request = verify_client_signature(client_request, conf)
             if client_request.req_validity ~= "invalid" then
                if client_request.data_block_answer == "" then
@@ -332,8 +392,8 @@ function control_client_coroutine (cor, client_request, client, co_ctr, conf)
                req_validity = "incomplete",
                req_type = "",
                filename = "",
+               upload_dir = "",
                header = {},
-               body = "",
                header_answer = "",
                data_block_answer = "",
                data_length = 0,
