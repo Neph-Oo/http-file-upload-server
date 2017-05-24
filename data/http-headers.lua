@@ -42,7 +42,7 @@ err409_data = table.concat{
 http_header = {
    error = {
       [400] = {
-         "HTTP/1.0 400 Bad Request\r\n",
+         "HTTP/1.1 400 Bad Request\r\n",
          "Content-Type: text/html; charset=UTF-8\r\n",
          "Referrer-Policy: no-referrer\r\n",
          "Content-Length: " .. #err400_data .. "\r\n",

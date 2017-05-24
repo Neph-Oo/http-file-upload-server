@@ -242,7 +242,6 @@ local function verify_header_validity (client, client_request, conf)
             end
             client_request.file = nil
          elseif client_request.req_type == "put" then
-            --client_request = set_file_path(client_request, conf)
             client_request.filename = client_request.upload_dir .. "/" .. client_request.filename
             client_request = verify_client_signature(client_request, conf)
             if client_request.req_validity ~= "invalid" then
@@ -257,6 +256,7 @@ local function verify_header_validity (client, client_request, conf)
                --really hate fucking OVERcomplicated regex, so
                client_request.data_tmp = remove_fucking_line_feed(client_request.data_tmp)
             end
+            --will be blank in case of success
             client:send(client_request.header_answer)
          end
       end
@@ -295,7 +295,7 @@ local function exec_request (client, client_request, conf)
             client_request.data_length = client_request.data_length + #client_request.data_block_answer
             client_request = send_data_to_client(client, client_request)
          else
-            client:send(client_request.data_block_answer)
+            --client:send(client_request.data_block_answer)
             client_request.req_validity = "terminated"
             if client_request.file then
                client_request.file:close()
@@ -309,7 +309,7 @@ local function exec_request (client, client_request, conf)
                client_request.file:write(client_request.data_tmp)
             end
          else
-            client:send(client_request.data_block_answer)
+            client:send("HTTP/1.1 200 OK\r\n\r\n")
             client_request.req_validity = "terminated"
             if client_request.file then
                client_request.file:close()
